@@ -1,0 +1,741 @@
+---
+title: "🚇 MTAccessibility Insights"
+format:
+  html:
+    toc: true
+    number-sections: true
+    embed-resources: true
+    code-fold: true
+    code-overflow: wrap
+    code-tools: 
+      source: https://github.com/richpauloo/mta/dsnb.qmd
+    html-math-method: katex
+    other-links:
+      - text: MTA Open Data Challenge
+        href: https://new.mta.info/article/mta-open-data-challenge
+      - text: MTA Open Data 
+        href: https://data.ny.gov/browse?Dataset-Information_Agency=Metropolitan%20Transportation%20Authority&limitTo=datasets
+    code-links:
+      - text: Github Repository
+        icon: file-code
+        href: https://github.com/richpauloo/mta
+---
+
+
+# Introduction
+
+Please note that this project is discussed at length in the [project webpage](https://richpauloo.com/mta#about), and this notebook only shows the data transformations that led to the results. This is a submission to the [2024 MTA Open Data Challenge](https://new.mta.info/article/mta-open-data-challenge).  
+
+
+# Cleaning
+
+Load some libraries for this analysis.
+
+```{r}
+library(tidyverse)
+library(sf)
+library(mapview)
+library(glue)
+library(ggdist)
+library(tidycensus)
+library(htmltools)
+library(janitor)
+library(data.table)
+library(patchwork)
+
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+
+## EDA: Stations and Hourly Ridership
+
+We build this analysis around two main sources of data, accessed 2024-10-13 from the [NYC Open data Portal](https://opendata.cityofnewyork.us/):  
+
+1. [MTA station geolocation](https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja/about_data)  
+2. [hourly ridership data](https://data.ny.gov/Transportation/MTA-Subway-Hourly-Ridership-Beginning-February-202/wujg-7c2s/about_data) from February 2022 to October 2024. These represent entries to a station and contain payment information.  
+
+Let's do some light exploratory data analysis (EDA) to get familiar with the data. 
+
+```{r}
+# Data accessed 2024-10-13.
+# Read stations data frame and convert to spatial object. 
+sta <- read_csv("data/MTA_Subway_Entrances_and_Exits__2024_20241013.csv") %>% 
+  select(-entrance_georeference) %>% 
+  clean_names() %>% 
+  mutate(entrance_type2 = ifelse(entrance_type == "Elevator", "Elevator", "Other")) %>% 
+  st_as_sf(coords = c("entrance_longitude", "entrance_latitude"), crs = 4329) 
+
+# hourly ridership
+hr <- fread("data/MTA_Subway_Hourly_Ridership__Beginning_February_2022_20241013.csv")
+```
+
+View the stations on a map.
+
+```{r}
+sta %>% 
+  mapview(zcol = "entrance_type2", layer.name = "Entrance Type", burst = TRUE)
+```
+
+Filter the hourly ridership data to one calendar year, from 2023-01-01 to 2023-12-31, convert all ridership groups to full fare, fair fare, student, and senior/disability. Then, per fare group, day of week, hour of the day, and borough, summarize the ridership count.
+
+We see that full fare riders comprise around 80-90% of riders, they are more like to ride during rush hour, and at night. Seniors and students don't ride as much at night. Students interestingly tend not to ride on the weekend. 
+
+```{r}
+#| out-width: 100%
+group_full_fare <- c("Metrocard - Full Fare", "Metrocard - Unlimited 7-Day", 
+                     "Metrocard - Unlimited 30-Day", "OMNY - Full Fare", 
+                     "Metrocard - Other", "OMNY - Other")
+group_fair_fare <- c("Metrocard - Fair Fare", "OMNY - Fair Fare")
+group_student <- c("Metrocard - Students", "OMNY - Students")
+group_senior <- c("OMNY - Seniors & Disability", "Metrocard - Seniors & Disability")
+
+# by borough
+hrb <- hr %>% 
+  mutate(
+    transit_timestamp = mdy_hms(transit_timestamp),
+    hour = hour(transit_timestamp), 
+    dow  = lubridate::wday(transit_timestamp, label = TRUE),
+    fare_group = case_when(
+      fare_class_category %in% group_senior ~ "Seniors & Disability",
+      fare_class_category %in% group_full_fare ~ "Full Fare",
+      fare_class_category %in% group_student ~ "Students",
+      fare_class_category %in% group_fair_fare ~ "Fair Fare",
+      TRUE ~ "Other" # optional to catch anything not covered by the case_when
+    )
+  ) %>% 
+  filter(
+    transit_timestamp >= ymd_hms("2023-01-01 00:00:00") & 
+    transit_timestamp <= ymd_hms("2023-12-31 24:00:00")) %>% 
+  group_by(fare_group, dow, hour, borough) %>% 
+  # because we're grouping by the day of week, and because, ignoring leap years,
+  # there are 52 Mondays in a year (and so on), we divide the annual ridership
+  # by 52 to arrive at an average weekly ridership
+  summarize(ridership = sum(ridership)/52) %>% 
+  ungroup()
+
+hrb %>% 
+  group_by(dow, hour, borough) %>% 
+  mutate(total_ridership = sum(ridership), 
+         ridership_proportion = ridership / total_ridership) %>% 
+  ungroup() %>% 
+  ggplot(aes(hour, ridership_proportion, color = borough)) +
+  geom_line() +
+  scale_x_continuous(
+    limits = c(0, 25),
+    breaks = seq(0, 24, by = 6),  # Breaks every 6 hours
+    labels = sprintf("%02d:00", seq(0, 24, by = 6))  # Format labels as "HH:00"
+  ) +
+  rcartocolor::scale_color_carto_d(palette = "Bold") +
+  labs(title = "Average daily ridership, per hour, per bouroughs, across fare groups") +
+  facet_grid(fare_group~dow, scales = "free") +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    panel.grid.major.y = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    legend.position = "bottom"
+  )
+```
+
+
+By borough average stats are interesting, but let's now recalculate ridership per station complex. This will not go into our map, but it is a level of grouped summary that we can plot for each station, and it will be cool to see average ridership proportions per station, per fare group, per hour of the day. Below, we show just Times Square, but here's [a PDF showing all 428 stations](https://github.com/richpauloo/mta/out/station_hourly_avg_per_rider.pdf).  
+
+```{r}
+#| out-width: 100%
+# by station ridership
+hrs <- hr %>% 
+  mutate(
+    transit_timestamp = mdy_hms(transit_timestamp),
+    hour = hour(transit_timestamp),
+    dow  = lubridate::wday(transit_timestamp, label = TRUE),
+     fare_group = case_when(
+      fare_class_category %in% group_senior ~ "Seniors & Disability",
+      fare_class_category %in% group_full_fare ~ "Full Fare",
+      fare_class_category %in% group_student ~ "Students",
+      fare_class_category %in% group_fair_fare ~ "Fair Fare",
+      TRUE ~ "Other" # optional to catch anything not covered by the case_when
+    )
+  ) %>% 
+  filter(
+    transit_timestamp >= ymd_hms("2023-01-01 00:00:00") & 
+    transit_timestamp <= ymd_hms("2023-12-31 24:00:00")
+  ) %>% 
+  # Calculate the average annual ridership count per day of week and hour of day
+  group_by(fare_group, dow, hour, station_complex, station_complex_id) %>% 
+  summarize(ridership = mean(ridership)) %>% 
+  ungroup()
+
+# For each fare group, calculate the total ridership and ridership proportion
+hrs <- hrs %>% 
+  group_by(dow, hour, station_complex, station_complex_id) %>% 
+  mutate(total_ridership = sum(ridership), 
+         ridership_proportion = ridership / total_ridership) %>% 
+  ungroup() %>%
+  mutate(fare_group = factor(
+    fare_group,
+    levels = c("Seniors & Disability", "Fair Fare", "Full Fare", "Students")
+  ))
+
+sta_mapgl <- hr %>% 
+  group_by(station_complex_id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4269) %>% 
+  select(station_complex_id, station_complex)
+
+# Write all plots to a PDF
+
+plots <- vector("list", nrow(sta_mapgl))
+
+for(i in seq_along(sta_mapgl$station_complex)){
+  station = sta_mapgl$station_complex[i]
+  plots[[i]] = hrs %>% 
+    filter(station_complex == station) %>%
+    mutate(dow_upscale = ifelse(dow %in% c("Sat","Sun"),"weekend","weekday")) %>% 
+    ggplot(aes(hour, ridership, group = dow, color = dow_upscale)) +
+    geom_line(alpha = 0.7, key_glyph = "timeseries") +
+    scale_color_manual(values = c("#7570b3", "#1b9e77")) +
+    scale_x_continuous(
+      limits = c(0, 25),
+      breaks = seq(0, 24, by = 6),  # Breaks every 6 hours
+      labels = sprintf("%02d:00", seq(0, 24, by = 6))  # Format labels as "HH:00"
+    ) +
+    facet_wrap(~fare_group, ncol = 1, scales = "free") +
+    labs(
+      title = NULL,
+      subtitle = glue("{station}\nAverage hourly ridership"),
+      y = NULL,
+      x = NULL,
+      color = "",
+      caption = "Data from 2023-01-01 to 2023-12-31"
+    ) +
+    theme_minimal() +
+    theme(
+      panel.grid.minor = element_blank(), 
+      legend.position = "bottom"
+    )
+}
+
+# Ran this once, but don't need to do it for the report
+# pdf("out/station_hourly_avg_per_rider.pdf", height = 4, width = 6)
+# plots
+# dev.off()
+
+# show just Times square
+times_square <- "Times Sq-42 St (N,Q,R,W,S,1,2,3,7)/42 St (A,C,E)"
+plots[[which(sta_mapgl$station_complex == times_square)]]
+```
+
+
+Finally, let's calculate a third grouped summary from our hourly data (the annual ridership count per station complex), which we will compare against Census tract level data. From this summary level, we can visualize the total ridership count per station. Let's look at the top 25 stations. Just over 40 million riders used Times Square in 2023.
+
+```{r}
+#| out-width: 100%
+# this is for the map
+hrs_annual <- hr %>% 
+  mutate(
+    transit_timestamp = mdy_hms(transit_timestamp),
+    hour = hour(transit_timestamp),
+    dow  = lubridate::wday(transit_timestamp, label = TRUE),
+     fare_group = case_when(
+      fare_class_category %in% group_senior ~ "Seniors & Disability",
+      fare_class_category %in% group_full_fare ~ "Full Fare",
+      fare_class_category %in% group_student ~ "Students",
+      fare_class_category %in% group_fair_fare ~ "Fair Fare",
+      TRUE ~ "Other" # optional to catch anything not covered by the case_when
+    )
+  ) %>% 
+  filter(
+    transit_timestamp >= ymd_hms("2023-01-01 00:00:00") & 
+    transit_timestamp <= ymd_hms("2023-12-31 24:00:00")
+  ) %>% 
+  # per fare group and station complex, what's the annual ridership count
+  group_by(fare_group, station_complex, station_complex_id) %>% 
+  summarize(ridership = sum(ridership, na.rm = TRUE)) %>% 
+  ungroup()
+
+# now calculate the proportion of ridership at each station per fare group
+hrs_annual <- hrs_annual %>% 
+  group_by(station_complex, station_complex_id) %>% 
+  mutate(total_ridership = sum(ridership), 
+         ridership_proportion = ridership / total_ridership) %>% 
+  ungroup() 
+
+# And visualize the top 25 stations in YC by total annual ridership
+hrs_annual %>% 
+  arrange(desc(total_ridership)) %>%
+  slice(1:100) %>% # 4 fare groups, so this takes the top 25 stations
+  # filter(station_complex %in% unique(hr$station_complex)[1:30]) %>%
+  ggplot(aes(ridership, fct_reorder(station_complex, total_ridership), fill = fare_group)) +
+  geom_col() +
+  rcartocolor::scale_fill_carto_d(palette = "Bold") +
+  scale_x_continuous(labels = scales::label_comma()) +
+  labs(
+    title = "Total annual ridership (2023) for the top 25 stations in NYC",
+    x = "Annual Ridership Count",
+    y = "",
+    fill = ""
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    panel.grid.major.y = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+
+Now we need to join ridership data to the station spatial data. 
+
+```{r}
+sta_complex_sf <- hr %>% 
+  group_by(station_complex_id) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4269) %>% 
+  select(station_complex_id)
+
+# Who takes transit (full fare, seniors/disability, students, fair fare) by station complex
+sta_ridership <- hrs_annual %>% 
+  left_join(sta_complex_sf) 
+  
+# data frame for seniors and fare fare
+sta_seniors <- sta_ridership %>% 
+  filter(fare_group == "Seniors & Disability") %>%
+  st_as_sf() %>% 
+  rename(
+    seniors_prop_sta = ridership_proportion,
+    seniors_ridership_sta = ridership
+  )
+
+sta_fair <- sta_ridership %>% 
+  filter(fare_group == "Fair Fare") %>%
+  st_as_sf() %>% 
+  rename(
+    low_income_prop_sta = ridership_proportion,
+    low_income_ridership_sta = ridership
+  )
+```
+
+We can visualize the ridership proportion of Seniors/Disability and Fair Fare populations per station and see that seniors[^3] and Fair Fare riders tend to use stations outside of denser urban metros. This trend is particularity evident for Fair Fare riders, where ridership proportions in Harlem and Queens can be 3-5 times the ridership proportion in downtown Manhattan.
+
+[^3]: Note that in the Senior ridership proportion map, there's one outlying station in Queens with a ~0.21 senior ridership that skews the color legend and obscures the general trend in senior ridership, so we re-level it to the next highest value, of 0.11 so we can better visualize general, regional trends.
+
+::: {.panel-tabset}
+
+## Fair Fare
+
+```{r, echo = FALSE}
+sta_fair %>% 
+  mutate(low_income_prop_sta = round(low_income_prop_sta, 2)) %>% 
+  mapview(zcol = "low_income_prop_sta", layer.name = "Fair Fare<br>ridership<br>proportion")
+```
+
+## Seniors & Disability
+
+```{r, echo = FALSE}
+sta_seniors %>% 
+  mutate(
+    seniors_prop_sta = ifelse(seniors_prop_sta > 0.21, 0.11, seniors_prop_sta),
+    seniors_prop_sta = round(seniors_prop_sta, 2)
+  ) %>%
+  mapview(zcol = "seniors_prop_sta", layer.name = "Senior<br>ridership<br>proportion")
+```
+
+:::
+
+
+## EDA: Census Tract Variables
+
+Now it's time to pull Census Tract data[^4]. Critically, we are interested in total population, senior population, and the below the poverty line, which we will assume is a proxy for the [Fair Fare riders](https://www.nyc.gov/site/fairfares/index.page)[^5]. From these variables we can calculate the proportion of potential senior and fair fare riders. From the Census tract spatial boundaries, we can find the nearest MTA Station.  
+
+[^4]: A subsequent analysis might refine the spatial unit of consideration to the Census block group level, of which there are ~13, 000 blocks in NYC.  
+[^5]: We find this assumption reasonable for the limited scope of this analysis because the 2024 Fair Fare program income qualification ceilings are slightly above the poverty threshold (on the order of ~20%).  
+
+```{r, message = FALSE, warning = FALSE}
+variables <- c(
+  median_age       = "B01002_001", 
+  median_income    = "B19013_001",
+  total_population = "B17021_001", 
+  below_poverty    = "B17021_002"
+)
+
+# Get the most recent ACS data with spatial polygons for New York City
+nyc_acs <- get_acs(
+  geography = "tract",                   # Get data at the census tract level
+  variables = variables,                 # Age and income variables
+  state = "NY",                          # State of New York
+  county = c("Bronx", "Kings", "New York", "Queens", "Richmond"),  # NYC boroughs
+  year = 2022,                           # Most recent ACS year
+  survey = "acs5",                       # 5-year ACS survey
+  geometry = TRUE                        # Include spatial data (polygons)
+)
+
+# Define the breaks and custom labels
+breaks <- seq(0, 1, by = 0.2)
+labels <- c("0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1")
+
+nyc <- nyc_acs %>% 
+  pivot_wider(names_from = variable, values_from = c(estimate, moe)) %>% 
+  mutate(
+    estimate_below_poverty_prop = estimate_below_poverty/estimate_total_population,
+    estimate_below_poverty_prop_bin = cut(estimate_below_poverty_prop, 
+                                          breaks = breaks, 
+                                          labels = labels, 
+                                          include.lowest = TRUE)
+  ) 
+```
+
+Let's visualize some of these variables:
+
+::: {.panel-tabset}
+
+## Median income
+
+```{r, echo=FALSE}
+nyc %>% mapview(zcol = "estimate_median_income", layer.name = "Median Income, USD")
+```
+
+## Median age
+
+```{r, echo=FALSE}
+nyc %>% mapview(zcol = "estimate_median_age",  layer.name = "Median Age")
+```
+
+## Below poverty
+
+```{r, echo=FALSE}
+nyc %>% mapview(zcol = "estimate_below_poverty",  layer.name = "Below Poverty")
+```
+
+::: 
+
+
+Now we calculate the population and proportion of seniors (65 years of age or greater).  
+
+```{r, message = FALSE, warning = FALSE}
+# add population seniors
+
+# Variables for men and women 65+
+variables <- c(
+  males_65_to_66 = "B01001_020",
+  males_67_to_69 = "B01001_021",
+  males_70_to_74 = "B01001_022",
+  males_75_to_79 = "B01001_023",
+  males_80_to_84 = "B01001_024",
+  males_85_and_over = "B01001_025",
+  females_65_to_66 = "B01001_044",
+  females_67_to_69 = "B01001_045",
+  females_70_to_74 = "B01001_046",
+  females_75_to_79 = "B01001_047",
+  females_80_to_84 = "B01001_048",
+  females_85_and_over = "B01001_049"
+)
+
+# Get the data for New York City
+nyc_seniors_combined <- get_acs(
+  geography = "tract",
+  variables = variables,
+  state = "NY",
+  county = c("Bronx", "Kings", "New York", "Queens", "Richmond"),  # NYC boroughs
+  year = 2022,
+  survey = "acs5"
+)
+
+# Summarize the total senior population (65+) by GEOID
+nyc_seniors_combined_totals <- nyc_seniors_combined %>%
+  group_by(GEOID) %>%
+  summarize(seniors_population_acs = sum(estimate, na.rm = TRUE))
+
+# join back to nyc
+nyc <- nyc %>% 
+  left_join(nyc_seniors_combined_totals) %>% 
+  mutate(seniors_prop_acs = seniors_population_acs/estimate_total_population)
+```
+
+Next, we find the nearest MTA station to each Census Tract and join this back to our main dataframe of Census Tract data.
+
+```{r}
+# Find the index of the nearest subway station for each polygon in 'nyc'
+nearest_station_index <- st_nearest_feature(nyc, sta_complex_sf)
+
+# Use the index to add the closest subway station information to the 'nyc' polygons
+nyc <- nyc %>%
+  mutate(station_complex_id = sta_complex_sf$station_complex_id[nearest_station_index])
+
+# add seniors proportion from station data
+nyc <- nyc %>% 
+  left_join(
+    sta_seniors %>% 
+      select(-fare_group) %>% 
+      st_drop_geometry()
+  ) 
+
+# add low income proportion from station data
+nyc <- nyc %>% 
+  rename(low_income_prop_acs = estimate_below_poverty_prop) %>%
+  left_join(
+    sta_fair %>% 
+      select(-fare_group) %>% 
+      st_drop_geometry()
+  ) 
+```
+
+
+# Modeling
+
+We assume there is a roughly linear relationship between the proportion of Seniors in a Census Tract and the proportion of Senior ridership at that tract's closest MTA Station[^6]. We make the same assumption for Fair Fare riders.  
+
+[^6]: As stated before in the Assumptions, because there is not a clear and simple way to disaggregate the senior population from the disabled population in the Census, and because Seniors likely make up the majority of Senior/Disability riders in this fare category, for the purposes of this broad analysis, we assume that Senior/Disability riders are Seniors and henceforth, refer to this category only as "Seniors."
+
+It follows then, that outliers from this linear trend--which we can quantify with the standard error of the least squares regression fit--represent deviations from "average ridership," relative to all other Census Tracts. In other words, we ask: compared to all other census tracts, is Senior and Fair Fare Ridership average, above average, or below average? Put yet another way, if the station ridership proportion ($y$) falls within the standard error ($\sigma_{\hat{y}}$) envelope of the least squares fit ($\hat{y}$), which is the average trend, then the station has average ridership, and if the ridership proportion falls outside of this envelope, it has above or below ridership. 
+
+
+\begin{align*}
+\text{Average Ridership:} & \quad \hat{y} - \sigma_{\hat{y}} \leq y \leq \hat{y} + \sigma_{\hat{y}} \\
+\text{Below Average Ridership:} & \quad y < \hat{y} - \sigma_{\hat{y}} \\
+\text{Above Average Ridership:} & \quad y > \hat{y} + \sigma_{\hat{y}}
+\end{align*}
+
+
+Next, we fit the models and show the graphical interpretation of the approach.  
+
+```{r}
+# cleaning for linear model
+nyc <- nyc %>% 
+  # rm 4 rows where total population is 0, so seniors prop is infinite
+  filter(estimate_total_population > 0 & seniors_prop_acs < 0.9) 
+
+nyc <- nyc %>% 
+    mutate(
+    residual_senior = residuals(lm(seniors_prop_sta ~ seniors_prop_acs, data = nyc)),
+    residual_low_income = residuals(lm(low_income_prop_sta ~ low_income_prop_acs, data = nyc)) 
+  ) %>% 
+  # Get the standard error from the model for residual_senior and residual_low_income
+  mutate(
+    se_senior = summary(lm(seniors_prop_sta ~ seniors_prop_acs, data = nyc))$sigma,
+    se_low_income = summary(lm(low_income_prop_sta ~ low_income_prop_acs, data = nyc))$sigma
+  ) %>%
+  # Create categories based on residuals using standard error (SE) thresholds
+  mutate(
+    seniors_category = case_when(
+      # residual_senior > 2 * se_senior ~ "Highly Overutilized",
+      residual_senior > se_senior ~ "Above Average",
+      residual_senior >= -se_senior & residual_senior <= se_senior ~ "Average",  # Utilized condition fixed
+      # residual_senior < -2 * se_senior ~ "Highly Underutilized",  # Check for highly underutilized first
+      residual_senior < -se_senior ~ "Below Average"
+    ),
+    low_income_category = case_when(
+      # residual_low_income > 2 * se_low_income ~ "Highly Overutilized",
+      residual_low_income > se_low_income ~ "Above Average",
+      residual_low_income >= -se_low_income & residual_low_income <= se_low_income ~ "Average",  # Utilized condition fixed
+      # residual_low_income < -2 * se_low_income ~ "Highly Underutilized",  # Check for highly underutilized first
+      residual_low_income < -se_low_income ~ "Below Average"
+    )
+  )
+
+
+lvls <- c("Above Average", "Average", "Below Average")
+nyc <- nyc %>% 
+  # Convert utilization categories to an ordered factor
+  mutate(
+    seniors_category = factor(seniors_category, 
+                              levels = lvls, 
+                              ordered = TRUE),
+    low_income_category = factor(low_income_category, 
+                                 levels = lvls, 
+                                 ordered = TRUE)
+  )
+
+# Fair Fare
+p1 <- nyc %>% 
+  ggplot(aes(low_income_prop_acs, low_income_prop_sta)) +
+  geom_point(aes(color = low_income_category), alpha = 0.3) + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Proportion Below Poverty (Census)",
+    y = "Proportion Fair Fare Ridership (MTA)",
+    color = ""
+  ) +
+  rcartocolor::scale_color_carto_d(palette = "Bold") +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    legend.position = "bottom"
+  )
+
+p2 <- nyc %>% 
+  ggplot(aes(low_income_prop_acs, low_income_prop_sta)) +
+  geom_point(aes(color = residual_low_income)) + 
+  scale_color_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Proportion Below Poverty (Census)",
+    y = "Proportion Fair Fare Ridership (MTA)",
+    color = "Residual"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    legend.position = "bottom"
+  )
+
+# Seniors
+p3 <- nyc %>% 
+  ggplot(aes(seniors_prop_acs, seniors_prop_sta)) +
+  geom_point(aes(color = seniors_category), alpha = 0.3) + 
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Proportion Senior (Census)",
+    y = "Proportion Senior Ridership (MTA)",
+    color = ""
+  ) +
+  rcartocolor::scale_color_carto_d(palette = "Vivid") +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    legend.position = "bottom"
+  )
+
+p4 <- nyc %>% 
+  ggplot(aes(seniors_prop_acs, seniors_prop_sta)) +
+  geom_point(aes(color = residual_senior)) + 
+  scale_color_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(
+    x = "Proportion Senior (Census)",
+    y = "Proportion Senior Ridership (MTA)",
+    color = "Residual"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank(), 
+    legend.position = "bottom"
+  )
+```
+
+::: {.panel-tabset}
+
+## Fair Fare
+
+```{r}
+#| out-width: 100%
+p1 + p2
+```
+
+## Seniors
+
+```{r}
+#| out-width: 100%
+p3 + p4
+```
+
+:::
+
+# Results 
+
+Finally, we can bring this all together in two maps. The code is below, but I won't render the maps so this file doesn't get too large. For the maps, refer back to the [project webpage](https://richpauloo.com/mta#about).  
+
+```{r}
+cat_key <- c("Above Average" = "🔵", "Average" = "⚪", "Below Average" = "🔴")
+
+nyc <- nyc %>% 
+  mutate(
+    NAME = str_replace(NAME, "; New York$", ""),
+    tooltip_senior = glue(
+      "<div style='color: black;'>
+        <b>{NAME}</b><br>
+        Closest Ⓜ️ station: <b>{station_complex}</b><br><hr>
+        {cat_key[seniors_category]} Relative to all other tracts, 🧓🏼 senior ridership is <b>{seniors_category}</b>.<br><br>
+        There are <b>{seniors_population_acs} seniors</b> in this tract<br>
+        (<b>{round(seniors_prop_acs*100, 0)}%</b> of tract population).<br><br>
+        Seniors make up <b>{round(seniors_prop_sta*100, 0)}%</b> of daily riders at
+        the closest station, <b>{station_complex}</b>.
+      </div>"
+    ),
+    tooltip_low_income = glue(
+      "<div style='color: black;'>
+        <b>{NAME}</b><br>
+        Closest Ⓜ️ station: <b>{station_complex}</b><br><hr>
+        {cat_key[low_income_category]} Relative to all other tracts, 🎟 fair fare ridership is <b>{low_income_category}</b>.<br><br>
+        There are <b>{estimate_below_poverty} people below poverty</b> in this tract<br>
+        (<b>{round(low_income_prop_acs*100, 0)}%</b> of tract population).<br><br>
+        People below poverty make up <b>{round(low_income_prop_sta*100, 0)}%</b> of daily riders at
+        the closest station, <b>{station_complex}</b>.
+      </div>"
+    ),
+    tooltip_unified = glue(
+      "<div style='color: black;'>
+        <b><i>{NAME}</i></b><br>
+        Closest Ⓜ️ station: <b>{station_complex}</b><br><hr>
+        {cat_key[seniors_category]} Relative to all other tracts, 🧓🏼 senior ridership is <b>{seniors_category}</b>.<br><br>
+        There are <b>{seniors_population_acs} seniors</b> in this tract<br>
+        (<b>{round(seniors_prop_acs*100, 0)}%</b> of tract population).<br><br>
+        Seniors make up <b>{round(seniors_prop_sta*100, 0)}%</b> of daily riders at
+        the closest station.<br><hr>
+        {cat_key[low_income_category]} Relative to all other tracts, 🎟️ fair fare ridership is <b>{low_income_category}</b>.<br><br>
+        There are <b>{estimate_below_poverty} people below poverty</b> in this tract
+        (<b>{round(low_income_prop_acs*100, 0)}%</b> of tract population).<br><br>
+        People below poverty make up <b>{round(low_income_prop_sta*100, 0)}%</b> of daily riders at
+        the closest station.
+      </div>"
+    )
+  )
+
+
+# write data for dashboard - uncomment for now because it's done
+# write_rds(sta_mapgl, "out/sta_mapgl.rds")
+# write_rds(nyc, "out/nyc.rds")
+```
+
+```{r, include = TRUE, eval = FALSE}
+# Just showing the code for one of the maps, and the maps for both
+obj_bounds <- nyc %>% 
+  st_convex_hull() %>% 
+  st_union() %>% 
+  st_as_sf() %>% 
+  st_centroid() %>% 
+  st_buffer(13500)
+
+sta_mapgl <- read_rds("out/sta_mapgl.rds") %>% 
+  mutate(popup_station = glue::glue("<b>{station_complex}</b>"))
+
+maplibre(style = carto_style("dark-matter-no-labels"), 
+         bounds = obj_bounds) %>%
+  add_fill_layer(
+    id = "Senior Ridership",
+    source = nyc,
+    fill_color = match_expr(
+      "seniors_category",
+      values = c("Above Average", "Average", "Below Average"),
+      stops  = c("#4575B4", "#F7F7F7", "#D73027")
+    ),
+    tooltip = "tooltip_senior",
+    # tooltip = "tooltip_unified",
+    fill_opacity = 0.5
+  ) %>%
+  add_circle_layer(
+    id = "MTA stations",
+    source = sta_mapgl,
+    circle_radius = 3.5,
+    circle_color = "blue",
+    circle_stroke_color = "#ffffff",
+    circle_stroke_width = 0.5,
+    circle_opacity = 0.8,
+    # 5MB --> 58MB to include the plot popups
+    # popup = "popup",
+    popup = "popup_station",
+    hover_options = list(
+      circle_radius = 12,
+      circle_color = "lightblue"
+    )
+  ) %>%
+  add_categorical_legend(
+    legend_title = "Senior Ridership",
+    values = c("Above Average", "Average", "Below Average"),
+    colors = c("#4575B4", "lightgrey", "#D73027")
+  ) %>%
+  add_fullscreen_control(position = "top-right") %>%
+  add_navigation_control() 
+```
+

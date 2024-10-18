@@ -1,0 +1,262 @@
+---
+title: "🚇 MTAccessibility Insights"
+output:
+  flexdashboard::flex_dashboard:
+    self_contained: true
+    theme:
+      version: 4
+      # bootswatch: darkly
+      bg: "#000000"
+      fg: "#ffffff"
+      primary: "#0039a6"
+      navbar-bg: "#000000"
+      base_font:
+        google: Open Sans
+      heading_font:
+        google: Questrial
+      code_font:
+        google:
+          # arguments to sass::font_google()
+          family: JetBrains Mono
+          local: false
+header-includes:
+  - |
+    <style>
+      .maplibregl-popup {
+        color: black !important; /* Ensure text is black */
+      }
+    </style>
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(sf)
+library(mapgl)
+
+sta_mapgl <- read_rds("out/sta_mapgl.rds") %>%
+  mutate(popup_station = glue::glue("<div style='color: black;'><b>{station_complex}</b></div>"))
+nyc <- read_rds("out/nyc.rds") %>%
+  select(seniors_category, low_income_category,
+         starts_with("tooltip"))
+
+obj_bounds <- nyc %>% st_convex_hull() %>% st_union() %>% st_as_sf() %>% st_centroid() %>% st_buffer(13500)
+```
+
+
+Column {.tabset}
+-------------------------------------
+
+### Seniors
+
+```{r}
+# Seniors
+maplibre(style = carto_style("dark-matter-no-labels"), 
+         bounds = obj_bounds) %>%
+    add_fill_layer(
+    id = "Senior Ridership",
+    source = nyc,
+    fill_color = match_expr(
+      "seniors_category",
+      values = c("Above Average", "Average", "Below Average"),
+      stops  = c("#4575B4", "#F7F7F7", "#D73027")
+    ),
+    tooltip = "tooltip_senior",
+    # tooltip = "tooltip_unified",
+    fill_opacity = 0.5
+  ) %>%
+  add_circle_layer(
+    id = "MTA stations",
+    source = sta_mapgl,
+    circle_radius = 3.5,
+    circle_color = "blue",
+    circle_stroke_color = "#ffffff",
+    circle_stroke_width = 0.5,
+    circle_opacity = 0.8,
+    # 5MB --> 58MB to include the plot popups
+    # popup = "popup",
+    popup = "popup_station",
+    hover_options = list(
+      circle_radius = 12,
+      circle_color = "lightblue"
+    )
+  ) %>%
+  add_categorical_legend(
+    legend_title = "Senior Ridership",
+    values = c("Above Average", "Average", "Below Average"),
+    colors = c("#4575B4", "lightgrey", "#D73027")
+  ) %>%
+  add_fullscreen_control(position = "top-right") %>%
+  add_navigation_control() 
+```   
+ 
+
+### Fair Fare
+
+```{r}
+# Low income
+maplibre(style = carto_style("dark-matter-no-labels"), 
+         bounds = obj_bounds) %>%
+  add_fill_layer(
+    id = "Fair Fare Ridership",
+    source = nyc,
+    fill_color = match_expr(
+      "low_income_category",
+      values = c("Above Average", "Average", "Below Average"),
+      stops  = c("#4575B4", "#F7F7F7", "#D73027")
+    ),
+    tooltip = "tooltip_low_income",
+    # tooltip = "tooltip_unified",
+    fill_opacity = 0.5
+  ) %>%
+  add_circle_layer(
+    id = "MTA stations",
+    source = sta_mapgl,
+    circle_radius = 3.5,
+    circle_color = "blue",
+    circle_stroke_color = "#ffffff",
+    circle_stroke_width = 0.5,
+    circle_opacity = 0.8,
+    # 5MB --> 58MB to include the plot popups
+    # popup = "popup",
+    popup = "popup_station",
+    hover_options = list(
+      circle_radius = 12,
+      circle_color = "lightblue"
+    )
+  ) %>%
+  add_categorical_legend(
+    legend_title = "Fair Fare Ridership",
+    values = c("Above Average", "Average", "Below Average"),
+    colors = c("#4575B4", "#F7F7F7", "#D73027")
+  ) %>%
+  add_fullscreen_control(position = "bottom-left") %>%
+  add_navigation_control() 
+```
+
+### Combined
+
+```{r}
+# Seniors
+maplibre(style = carto_style("dark-matter-no-labels"), 
+         bounds = obj_bounds) %>%
+    add_fill_layer(
+    id = "Senior Ridership",
+    source = nyc,
+    fill_color = match_expr(
+      "seniors_category",
+      values = c("Above Average", "Average", "Below Average"),
+      stops  = c("#4575B4", "#F7F7F7", "#D73027")
+    ),
+    # tooltip = "tooltip_senior",
+    tooltip = "tooltip_unified",
+    fill_opacity = 0.5
+  ) %>%
+  add_fill_layer(
+    id = "Fair Fare Ridership",
+    source = nyc,
+    fill_color = match_expr(
+      "low_income_category",
+      values = c("Above Average", "Average", "Below Average"),
+      stops  = c("#4575B4", "#F7F7F7", "#D73027")
+    ),
+    # tooltip = "tooltip_low_income",
+    tooltip = "tooltip_unified",
+    fill_opacity = 0.5
+  ) %>%
+  add_circle_layer(
+    id = "MTA stations",
+    source = sta_mapgl,
+    circle_radius = 3.5,
+    circle_color = "blue",
+    circle_stroke_color = "#ffffff",
+    circle_stroke_width = 0.5,
+    circle_opacity = 0.8,
+    # 5MB --> 58MB to include the plot popups
+    # popup = "popup",
+    popup = "popup_station",
+    hover_options = list(
+      circle_radius = 12,
+      circle_color = "lightblue"
+    )
+  ) %>%
+  add_categorical_legend(
+    legend_title = "Ridership",
+    values = c("Above Average", "Average", "Below Average"),
+    colors = c("#4575B4", "lightgrey", "#D73027"),
+    position = "bottom-left"
+  ) %>%
+  add_fullscreen_control(position = "top-right") %>%
+  add_navigation_control() %>% 
+  add_layers_control()
+```   
+
+
+### About
+
+_This is a submission to the [2024 MTA Open Data Challenge](https://new.mta.info/article/mta-open-data-challenge)._    
+
+#### Introduction
+
+New York City's public transit system is a lifeline for millions, including seniors and low-income residents who rely on it for daily commutes, errands, and access to essential services. Understanding how these populations use the subway system is vital for ensuring that transit services remain accessible, equitable, and responsive to their needs.
+
+This accessibility analysis aims to shed light on ridership patterns among seniors and Fair Fare riders (low-income individuals who qualify for reduced fare programs). By studying the spatial patterns of subway ridership relative to the demographics of surrounding neighborhoods, we can uncover critical insights into how well the MTA serves these vulnerable populations and where opportunities for strategic intervention might exist. These insights will enable the MTA to allocate resources more effectively, improve accessibility where it is most needed, and ensure that no community is left behind in the provision of transit services.
+
+The findings of this study could have significant implications for policy and planning. For instance, above-average ridership in certain areas might point to unmet transportation needs, while below-average ridership could reveal opportunities to enhance alternative modes of transit or improve service in underutilized areas.
+
+
+#### Data and Methods
+
+[📔 See this notebook](https://richpauloo.com/mtanb) for a detailed walkthough of the data science approach taken in this study.  
+
+For this analysis, we used three key datasets:
+
+1. **MTA Subway Hourly Ridership Data (2023)**: This dataset provides ridership counts by fare group (seniors/disability and Fair Fare riders). It gives us a clear picture of how these populations use the subway system.  
+
+2. **MTA Subway Entrances and Exits Data**: This station-level dataset provides information about station accessibility, including elevators and escalators, which is crucial for evaluating station suitability for vulnerable populations.
+
+3. **Census Tract Data from the 2022 American Community Survey (ACS)**: Census tract data is used to estimate the proportion of seniors (age 65+) and low-income individuals (those below the poverty line), serving as proxies for the two ridership groups of interest.  
+
+The goal of this study was to assess the relationship between the demographic characteristics of census tracts and the ridership patterns of seniors and low-income populations at nearby subway stations. We assigned each census tract to its nearest subway station, then used linear regression to model the relationship between census data and station data in terms of senior and Fair Fare population proportion versus ridership proportion. Census tracts were then classified as having **average**, **above average**, or **below average** ridership based on how their ridership patterns compared to ridership at all other census tracts.
+
+
+#### Results
+
+The analysis revealed interesting patterns in ridership across different census tracts:  
+
+- **Above average senior ridership** was concentrated in areas where seniors may need to travel farther for work or essential services. These areas appear to be correlated with **low-income tracts**, suggesting that seniors in these neighborhoods face greater travel burdens and rely more heavily on public transit.  
+
+- **Above average Fair Fare ridership** also indicated areas with high levels of economic hardship, where residents have few alternatives to public transportation and may travel longer distances for work.  
+
+- **Below average ridership** seems to be correlated with more affluent or well-connected areas where residents might have other transportation options, such as walking or private vehicles. These tracts may have more localized services, reducing the need for frequent subway use.  
+
+- **Zones of above average ridership for seniors and Fair Fare riders**, such as south Brooklyn, might represent areas of 
+
+
+
+##### Implications for MTA
+
+1. **Resource Allocation**: The MTA can use these findings to target accessibility improvements in stations serving areas with high proportions of seniors and low-income residents. Stations with above-average ridership but inadequate accessibility (e.g., lack of elevators or escalators) might be prioritized for upgrades.  
+
+2. **Service Adjustments**: In areas with below-average ridership, the MTA might explore enhancing bus routes or other services that better meet the local population's needs, especially for residents who might prefer surface transportation over the subway. We might also seek to understand _why_ low ridership is observed in these populations.  
+
+3. **Policy Applications**: The study highlights the need for continued investment in programs like **Fair Fares**, which enable low-income riders to access affordable transit. Expanding this program to more residents could help reduce travel-based inequality, especially in areas with high populations of qualifying individuals but below average ridership.  
+
+##### Future Studies
+
+1. **Spatial autocorrelation**: A future study could apply techniques like Moran's I to assess the spatial correlation of above-average senior ridership and low-income tracts, quantifying the degree of overlap between these two groups, to test the hypothesis that low-income seniors are more likely to travel than high-income seniors.  
+
+2. **Impact of accessibility upgrades**: After implementing targeted accessibility improvements, future analyses could use changes in ridership patterns to evaluate the effectiveness of those interventions.  
+
+3. **Multi-modal transit**: Expanding the model to include other forms of transit (e.g., buses, paratransit) could provide a more comprehensive view of how seniors and low-income riders navigate the city.  
+
+4. **Elevator access**: This study neglected elevator access, but a future study might prioritze stations for elevator upgrades.  
+
+5. **Aggregating by different spatial units**: For the purposes of this study, and because transit occurs between boroughs, all five boroughs are grouped into the regression. However, there may be merit in a future study that groups each borough independently to examine trends that might emerge at that spatial scale. In the same sense, for future analysis, data could be grouped at different spatial scales, including by neighborhood or community district, subway line corridors, fare zones, accessibility zones (e.g., stations with elevators or ADA compliance), transit-oriented development areas, economic development zones, land use zones (commercial, industrial, or residential), and proximity to major transit hubs like Penn Station or Grand Central, or by distance from key downtown metro areas. Analyses at these scales might help identify underserved areas with unique transit needs.  
+
+This analysis lays very preliminary groundwork for a more nuanced understanding of transit accessibility in New York City. With these insights, the MTA can make informed decisions to better serve its most vulnerable populations, ultimately enhancing the quality of life for seniors, low-income residents, and the broader community.  
+
+
+##### Contact
+
+[richpauloo.com](https://richpauloo.com)  
