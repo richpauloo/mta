@@ -8,7 +8,7 @@ output:
       # bootswatch: darkly
       bg: "#000000"
       fg: "#ffffff"
-      primary: "#0039a6"
+      primary: "#009b3a"
       navbar-bg: "#000000"
       base_font:
         google: Open Sans
@@ -19,13 +19,6 @@ output:
           # arguments to sass::font_google()
           family: JetBrains Mono
           local: false
-header-includes:
-  - |
-    <style>
-      .maplibregl-popup {
-        color: black !important; /* Ensure text is black */
-      }
-    </style>
 ---
 
 ```{r setup, include=FALSE}
