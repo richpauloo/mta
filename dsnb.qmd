@@ -126,9 +126,14 @@ hrb %>%
     labels = sprintf("%02d:00", seq(0, 24, by = 6))  # Format labels as "HH:00"
   ) +
   rcartocolor::scale_color_carto_d(palette = "Bold") +
-  labs(title = "Average daily ridership, per hour, per bouroughs, across fare groups") +
+  labs(
+    title = "Average daily ridership, per hour, per bouroughs, across fare groups",
+    x = "",
+    y = "",
+    color = ""
+  ) +
   facet_grid(fare_group~dow, scales = "free") +
-  theme_minimal() +
+  theme_minimal(base_size = 9) +
   theme(
     panel.grid.minor = element_blank(), 
     panel.grid.major.y = element_blank(),
@@ -138,7 +143,7 @@ hrb %>%
 ```
 
 
-By borough average stats are interesting, but let's now recalculate ridership per station complex. This will not go into our map, but it is a level of grouped summary that we can plot for each station, and it will be cool to see average ridership proportions per station, per fare group, per hour of the day. Below, we show just Times Square, but here's [a PDF showing all 428 stations](https://github.com/richpauloo/mta/out/station_hourly_avg_per_rider.pdf).  
+By borough average stats are interesting, but let's now recalculate ridership per station complex. This will not go into our map, but it is a level of grouped summary that we can plot for each station, and it will be cool to see average ridership proportions per station, per fare group, per hour of the day.
 
 ```{r}
 #| out-width: 100%
@@ -184,7 +189,6 @@ sta_mapgl <- hr %>%
   select(station_complex_id, station_complex)
 
 # Write all plots to a PDF
-
 plots <- vector("list", nrow(sta_mapgl))
 
 for(i in seq_along(sta_mapgl$station_complex)){
@@ -220,11 +224,35 @@ for(i in seq_along(sta_mapgl$station_complex)){
 # pdf("out/station_hourly_avg_per_rider.pdf", height = 4, width = 6)
 # plots
 # dev.off()
-
-# show just Times square
-times_square <- "Times Sq-42 St (N,Q,R,W,S,1,2,3,7)/42 St (A,C,E)"
-plots[[which(sta_mapgl$station_complex == times_square)]]
 ```
+
+Below, we show three stations with different curves, but here's [a PDF showing the average daily ridership curves at all 400+ station complexes](https://github.com/richpauloo/mta/blob/main/out/station_hourly_avg_per_rider.pdf). Some stations seek their peak in the morning, some at morning and night, and some at night.  
+
+
+::: {.panel-tabset}
+
+## Morning Peak
+
+```{r}
+sta_newkirk <- "Newkirk Av-Little Haiti (2,5)"
+plots[[which(sta_mapgl$station_complex == sta_newkirk)]]
+```
+
+## Dual Peak
+
+```{r}
+sta_westchester <- "Westchester Sq-E Tremont Av (6)"
+plots[[which(sta_mapgl$station_complex == sta_westchester)]]
+```
+
+## Evening Peak
+
+```{r}
+sta_47 <- "47-50 Sts-Rockefeller Ctr (B,D,F,M)"
+plots[[which(sta_mapgl$station_complex == sta_47)]]
+```
+
+:::
 
 
 Finally, let's calculate a third grouped summary from our hourly data (the annual ridership count per station complex), which we will compare against Census tract level data. From this summary level, we can visualize the total ridership count per station. Let's look at the top 25 stations. Just over 40 million riders used Times Square in 2023.
@@ -276,7 +304,7 @@ hrs_annual %>%
     y = "",
     fill = ""
   ) +
-  theme_minimal() +
+  theme_minimal(base_size = 9) +
   theme(
     panel.grid.minor = element_blank(), 
     panel.grid.major.y = element_blank(),
@@ -352,7 +380,7 @@ Now it's time to pull Census Tract data[^4]. Critically, we are interested in to
 [^4]: A subsequent analysis might refine the spatial unit of consideration to the Census block group level, of which there are ~13, 000 blocks in NYC.  
 [^5]: We find this assumption reasonable for the limited scope of this analysis because the 2024 Fair Fare program income qualification ceilings are slightly above the poverty threshold (on the order of ~20%).  
 
-```{r, message = FALSE, warning = FALSE}
+```{r, message = FALSE, warning = FALSE, results='hide'}
 variables <- c(
   median_age       = "B01002_001", 
   median_income    = "B19013_001",
