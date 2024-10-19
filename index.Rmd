@@ -204,11 +204,11 @@ The findings of this study could have significant implications for policy and pl
 
 For this analysis, we used three key datasets:
 
-1. **MTA Subway Hourly Ridership Data (2023)**: This dataset provides ridership counts by fare group (seniors/disability and Fair Fare riders). It gives us a clear picture of how these populations use the subway system.  
+1. [**MTA Subway Hourly Ridership: Beginning February 2022**](https://data.ny.gov/Transportation/MTA-Subway-Hourly-Ridership-Beginning-February-202/wujg-7c2s/about_data): This dataset provides ridership counts by fare group (seniors/disability and Fair Fare riders). It gives us a clear picture of how these populations use the subway system.  
 
-2. **MTA Subway Entrances and Exits Data**: This station-level dataset provides information about station accessibility, including elevators and escalators, which is crucial for evaluating station suitability for vulnerable populations.
+2. [**MTA Subway Entrances and Exits: 2024**](https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja/about_data): This station-level dataset provides information about station accessibility, including elevators and escalators, which is crucial for evaluating station suitability for vulnerable populations.
 
-3. **Census Tract Data from the 2022 American Community Survey (ACS)**: Census tract data is used to estimate the proportion of seniors (age 65+) and low-income individuals (those below the poverty line), serving as proxies for the two ridership groups of interest.  
+3. [**Census Tract Data from the 2022 American Community Survey (ACS)**](https://www.census.gov/programs-surveys/acs): Census tract data is used to estimate the proportion of seniors (age 65+) and low-income individuals (those below the poverty line), serving as proxies for the two ridership groups of interest.  
 
 The goal of this study was to assess the relationship between the demographic characteristics of census tracts and the ridership patterns of seniors and low-income populations at nearby subway stations. We assigned each census tract to its nearest subway station, then used linear regression to model the relationship between census data and station data in terms of senior and Fair Fare population proportion versus ridership proportion. Census tracts were then classified as having **average**, **above average**, or **below average** ridership based on how their ridership patterns compared to ridership at all other census tracts.
 
