@@ -426,55 +426,59 @@ sta_mapgl <- hr %>%
   st_as_sf(coords = c("longitude", "latitude"), crs = 4269) %>% 
   select(station_complex_id, station_complex)
 
+bnyc <- st_read("data/Borough Boundaries.geojson") %>% 
+  st_transform(crs = 4269) %>% 
+  rmapshaper::ms_simplify(keep_shapes = TRUE)
+
+crs <- "+proj=omerc +lonc=90 +lat_0=40 +gamma=143 +alpha=57"
+
 plots <- vector("list", nrow(sta_mapgl))
 for(i in seq_along(sta_mapgl$station_complex)){
   station = sta_mapgl$station_complex[i]
-  p = hrs %>% 
-    filter(fare_group %in% c("Seniors & Disability", "Fair Fare") & 
-           station_complex == station) %>%
+  p1 = hrs %>% 
+    filter(station_complex == station) %>%
     mutate(dow_upscale = ifelse(dow %in% c("Sat","Sun"),"weekend","weekday")) %>% 
     ggplot(aes(hour, ridership, group = dow, color = dow_upscale)) +
     geom_line(alpha = 0.7, key_glyph = "timeseries") +
-    scale_color_manual(values = c("#7570b3", "#1b9e77")) +
+    scale_color_manual(values = c("#984ea3", "#377eb8")) +
     scale_x_continuous(
       limits = c(0, 25),
       breaks = seq(0, 24, by = 6),  # Breaks every 6 hours
       labels = sprintf("%02d:00", seq(0, 24, by = 6))  # Format labels as "HH:00"
     ) +
-    facet_wrap(~fare_group, ncol = 1) +
+    facet_wrap(~fare_group, ncol = 1, scales = "free") +
     labs(
-      title = NULL,
-      subtitle = glue("{station}\nAverage hourly ridership"),
+      title = " ",
+      subtitle = " ",
       y = NULL,
       x = NULL,
-      color = "",
-      caption = "Data from 2023-01-01 to 2023-12-31"
+      color = ""
     ) +
-    # guides(color = FALSE) +
-    theme_minimal(base_size = 8) +
+    theme_minimal() +
     theme(
       panel.grid.minor = element_blank(), 
-      # panel.grid.major.y = element_blank(),
       legend.position = "bottom"
     )
   
-  # Step 2: Save the ggplot to a PNG file temporarily
-  tmp_file = tempfile(fileext = ".png")
-  ggsave(tmp_file, plot = p, width = 2, height = 3, dpi = 300)
+  p2 = ggplot() + 
+    geom_sf(data = bnyc, fill = "grey90") + 
+    geom_sf(data = sta_mapgl, color = "#4daf4a", cex = 0.8, alpha = 0.5, pch =20) +
+    geom_sf(data = filter(sta_mapgl, station_complex == station), 
+            color = "#e41a1c", cex = 2, alpha = 0.8) +
+    coord_sf(crs = crs) +
+    labs(
+      title = glue("{station} Average hourly ridership"),
+      subtitle = "Data from 2023-01-01 to 2023-12-31"
+    ) +
+    theme_void()
   
-  # Step 3: Encode the PNG file to base64
-  img_base64 = base64encode(tmp_file)
-  
-  # Step 4: Create an HTML string with the base64-encoded image
-  cat("Writing plot", i, "/", nrow(sta_mapgl), "\n")
-  plots[[i]] = paste0(
-    '<img src="data:image/png;base64,', img_base64, '" alt="ggplot" width="200" height="300">'
-  )
+  plots[[i]] = p2 + p1 + plot_layout(widths = c(1, 2))
   
 }
 
-sta_mapgl$popup <- unlist(plots)
-
+pdf("out/station_hourly_avg_per_rider.pdf", height = 6, width = 12)
+plots
+dev.off()
 
 
 
@@ -523,21 +527,3 @@ nyc <- nyc %>%
 write_rds(sta_mapgl, "out/sta_mapgl.rds")
 write_rds(nyc, "out/nyc.rds")
 
-
-
-
-
-# Archive -----------------------------------------------------------------
-#   fill_color = step_expr(
-#     column = "residual_senior",
-#     base = RColorBrewer::brewer.pal(6, "RdYlBu")[1],
-#     stops = RColorBrewer::brewer.pal(6, "RdYlBu")[2:6],
-#     values = seq(min(nyc$residual_senior), max(nyc$residual_senior), 0.05),
-#     na_color = "white"
-#   )
-# add_symbol_layer(
-#   id = "points-of-interest",
-#   source = mutate(sta_mapgl, category = "Bicycle"),
-#   icon_image = get_column("category"),
-#   icon_allow_overlap = TRUE,
-#   tooltip = "station_complex"

@@ -8,7 +8,7 @@ format:
     code-fold: true
     code-overflow: wrap
     code-tools: 
-      source: https://github.com/richpauloo/mta/dsnb.qmd
+      source: https://github.com/richpauloo/mta
     html-math-method: katex
     other-links:
       - text: MTA Open Data Challenge
