@@ -1,5 +1,5 @@
 ---
-title: "🚇 MTAccessibility Insights"
+title: "🚇 MTAccessibility"
 format:
   html:
     toc: true

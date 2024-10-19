@@ -1,5 +1,5 @@
 ---
-title: "🚇 MTAccessibility Insights"
+title: "🚇 MTAccessibility"
 output:
   flexdashboard::flex_dashboard:
     self_contained: true
