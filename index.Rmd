@@ -221,9 +221,9 @@ The analysis revealed interesting patterns in ridership across different census 
 
 - **Above average Fair Fare ridership** also indicated areas with high levels of economic hardship, where residents have few alternatives to public transportation and may travel longer distances for work.  
 
-- **Below average ridership** seems to be correlated with more affluent or well-connected areas where residents might have other transportation options, such as walking or private vehicles. These tracts may have more localized services, reducing the need for frequent subway use.  
+- **Below average ridership** seems to be correlated with relatively more affluent or well-connected areas where residents might have other transportation options, such as walking or private vehicles. These tracts may have more localized services, reducing the need for frequent subway use.  
 
-- **Zones of above average ridership for seniors and Fair Fare riders**, such as south Brooklyn, might represent areas of 
+- **Zones of above average ridership for seniors and Fair Fare riders**, such as south Brooklyn, might represent areas with the greatest need for interventions and transportation assistance services to meet an increased reliance on transit.  
 
 
 
@@ -243,7 +243,7 @@ The analysis revealed interesting patterns in ridership across different census 
 
 3. **Multi-modal transit**: Expanding the model to include other forms of transit (e.g., buses, paratransit) could provide a more comprehensive view of how seniors and low-income riders navigate the city.  
 
-4. **Elevator access**: This study neglected elevator access, but a future study might prioritze stations for elevator upgrades.  
+4. **Elevator access**: This study neglected elevator access, but a future study might prioritize stations for elevator upgrades.  
 
 5. **Aggregating by different spatial units**: For the purposes of this study, and because transit occurs between boroughs, all five boroughs are grouped into the regression. However, there may be merit in a future study that groups each borough independently to examine trends that might emerge at that spatial scale. In the same sense, for future analysis, data could be grouped at different spatial scales, including by neighborhood or community district, subway line corridors, fare zones, accessibility zones (e.g., stations with elevators or ADA compliance), transit-oriented development areas, economic development zones, land use zones (commercial, industrial, or residential), and proximity to major transit hubs like Penn Station or Grand Central, or by distance from key downtown metro areas. Analyses at these scales might help identify underserved areas with unique transit needs.  
 

@@ -6,15 +6,19 @@ format:
     number-sections: true
     embed-resources: true
     code-fold: true
-    code-overflow: wrap
+    # code-overflow: wrap
     code-tools: 
       source: https://github.com/richpauloo/mta
     html-math-method: katex
     other-links:
       - text: MTA Open Data Challenge
         href: https://new.mta.info/article/mta-open-data-challenge
-      - text: MTA Open Data 
+      - text: MTA Open Data Sources
         href: https://data.ny.gov/browse?Dataset-Information_Agency=Metropolitan%20Transportation%20Authority&limitTo=datasets
+      - text: MTAccessibility Web Dashboard
+        href: https://richpauloo.com/mta
+      - text: MTAccessibility average daily ridership curves for all 428 station complexes
+        href: https://github.com/richpauloo/mta/blob/main/out/station_hourly_avg_per_rider.pdf
     code-links:
       - text: Github Repository
         icon: file-code
@@ -22,12 +26,31 @@ format:
 ---
 
 
+# Preface
+
+This notebook is a companion to the [MTAccessibility web dashboard](https://richpauloo.com/) which displays a subset of the project's findings. The notebook and dashboard, taken together, are a submission to the [2024 MTA Open Data Challenge](https://new.mta.info/article/mta-open-data-challenge), and so between the two, there is a bit of overlap. The main difference is that in this notebook, we show the data transformations that led to the results, and a few other ancillary insights gained during exploratory data analysis which ultimately led to the creation of the dashboard (which itself focuses on only one finding related to Senior and Fair Fare ridership).
+
 # Introduction
 
-Please note that this project is discussed at length in the [project webpage](https://richpauloo.com/mta#about), and this notebook only shows the data transformations that led to the results. This is a submission to the [2024 MTA Open Data Challenge](https://new.mta.info/article/mta-open-data-challenge).  
+New York City’s public transit system is a lifeline for millions, including seniors and low-income residents who rely on it for daily commutes, errands, and access to essential services. Understanding how these populations use the subway system is vital for ensuring that transit services remain accessible, equitable, and responsive to their needs.
 
+This accessibility analysis aims to shed light on ridership patterns, particularly among seniors and Fair Fare riders (low-income individuals who qualify for reduced fare programs). By studying the spatial patterns of subway ridership relative to the demographics of surrounding neighborhoods, we can uncover critical insights into how well the MTA serves vulnerable populations and where opportunities for strategic intervention might exist. These insights will enable the MTA to allocate resources more effectively, improve accessibility where it is most needed, and ensure that no community is left behind in the provision of transit services.
 
-# Cleaning
+The findings of this study could have significant implications for policy and planning. For instance, above-average ridership in certain areas might point to unmet transportation needs, while below-average ridership could reveal opportunities to enhance alternative modes of transit or improve service in underutilized areas.
+
+# Data and Methods
+
+For this analysis, we used three key datasets:
+
+1. [MTA Subway Hourly Ridership](https://data.ny.gov/Transportation/MTA-Subway-Hourly-Ridership-Beginning-February-202/wujg-7c2s/about_data): Beginning February 2022: This dataset provides ridership counts by fare group (seniors/disability and Fair Fare riders). It gives us a clear picture of how these populations use the subway system.  
+
+2. [MTA Subway Entrances and Exits](https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja/about_data): 2024: This station-level dataset provides information about station accessibility, including elevators and escalators, which is crucial for evaluating station suitability for vulnerable populations.  
+
+3. [Census Tract Data from the 2022 American Community Survey (ACS)](https://www.census.gov/programs-surveys/acs): Census tract data is used to estimate the proportion of seniors (age 65+) and low-income individuals (those below the poverty line), serving as proxies for the two ridership groups of interest.  
+
+The goal of this study was to assess the relationship between the demographic characteristics of census tracts and the ridership patterns of seniors and low-income populations at nearby subway stations. We assigned each census tract to its nearest subway station, then used linear regression to model the relationship between census data and station data in terms of senior and Fair Fare population proportion versus ridership proportion. Census tracts were then classified as having average, above average, or below average ridership based on how their ridership patterns compared to ridership at all other census tracts.
+
+# Exploratory Data Analysis
 
 Load some libraries for this analysis.
 
@@ -47,12 +70,12 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```
 
 
-## EDA: Stations and Hourly Ridership
+## Cleaning 
 
-We build this analysis around two main sources of data, accessed 2024-10-13 from the [NYC Open data Portal](https://opendata.cityofnewyork.us/):  
+Our analysis is built around two main sources of Open MTA data, accessed 2024-10-13 from the [NYC Open data Portal](https://opendata.cityofnewyork.us/):  
 
-1. [MTA station geolocation](https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja/about_data)  
-2. [hourly ridership data](https://data.ny.gov/Transportation/MTA-Subway-Hourly-Ridership-Beginning-February-202/wujg-7c2s/about_data) from February 2022 to October 2024. These represent entries to a station and contain payment information.  
+1. [Hourly ridership data](https://data.ny.gov/Transportation/MTA-Subway-Hourly-Ridership-Beginning-February-202/wujg-7c2s/about_data) from February 2022 to October 2024. These represent entries to a station and contain payment information.  
+2. [MTA station geolocation](https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja/about_data). We will use the station complex geolocation in this analysis, but a future study could analyze all entrances and exits in this dataset to determine how physical accessibility impacts different communities. 
 
 Let's do some light exploratory data analysis (EDA) to get familiar with the data. 
 
@@ -69,16 +92,17 @@ sta <- read_csv("data/MTA_Subway_Entrances_and_Exits__2024_20241013.csv") %>%
 hr <- fread("data/MTA_Subway_Hourly_Ridership__Beginning_February_2022_20241013.csv")
 ```
 
-View the stations on a map.
+Let's view the stations on a map. Stations with elevators appear relatively even distributed across space.
 
 ```{r}
 sta %>% 
+  mutate(entrance_type2 = factor(entrance_type2, levels = c("Elevator", "Other"))) %>% 
   mapview(zcol = "entrance_type2", layer.name = "Entrance Type", burst = TRUE)
 ```
 
-Filter the hourly ridership data to one calendar year, from 2023-01-01 to 2023-12-31, convert all ridership groups to full fare, fair fare, student, and senior/disability. Then, per fare group, day of week, hour of the day, and borough, summarize the ridership count.
+Next, we filter the hourly ridership data to one calendar year, from 2023-01-01 to 2023-12-31, and aggregate all ridership groups to one of the following four groups: full fare, fair fare, student, and senior/disability. Then, we summarize the ridership count per fare group, day of week, hour of the day, and borough.
 
-We see that full fare riders comprise around 80-90% of riders, they are more like to ride during rush hour, and at night. Seniors and students don't ride as much at night. Students interestingly tend not to ride on the weekend. 
+We observe that full fare riders comprise around 80-90% of riders and they are more like to ride during rush hour, and at night. Seniors and students don't ride as much at night. Students interestingly are less likely to ride on the weekend. 
 
 ```{r}
 #| out-width: 100%
@@ -143,7 +167,9 @@ hrb %>%
 ```
 
 
-By borough average stats are interesting, but let's now recalculate ridership per station complex. This will not go into our map, but it is a level of grouped summary that we can plot for each station, and it will be cool to see average ridership proportions per station, per fare group, per hour of the day.
+## Hourly Ridership Curves
+
+By borough average stats are interesting, but let's go one spatial level deeper and recalculate ridership per station complex. This will not go into our map, but it is a level of grouped summary that we can visualize for each station, and average ridership proportions per station, per fare group, per hour of the day will reveal the flow dynamics of urban commuters.
 
 ```{r}
 #| out-width: 100%
@@ -226,7 +252,9 @@ for(i in seq_along(sta_mapgl$station_complex)){
 # dev.off()
 ```
 
-Below, we show three stations with different curves, but here's [a PDF showing the average daily ridership curves at all 400+ station complexes](https://github.com/richpauloo/mta/blob/main/out/station_hourly_avg_per_rider.pdf). Some stations seek their peak in the morning, some at morning and night, and some at night.  
+Below, we show three stations with different curves, but as a supplement to this project, we provide a [PDF showing the average daily ridership curves at all 428 station complexes](https://github.com/richpauloo/mta/blob/main/out/station_hourly_avg_per_rider.pdf). Some stations seek their peak in the morning, some at morning and night, and some at night. 
+
+Morning peaking stations likely reflect the inflow of workers into the dense urban core, whereas evening peaking stations might reflect the opposite: the outflow of workers away from urban core. The examples below shown below seem to support this hypothesis. Stations with a more balanced morning and evening peak might be explained by a balance of residential and commercial surroundings that both supply and receive commuters.  
 
 
 ::: {.panel-tabset}
@@ -255,7 +283,88 @@ plots[[which(sta_mapgl$station_complex == sta_47)]]
 :::
 
 
-Finally, let's calculate a third grouped summary from our hourly data (the annual ridership count per station complex), which we will compare against Census tract level data. From this summary level, we can visualize the total ridership count per station. Let's look at the top 25 stations. Just over 40 million riders used Times Square in 2023.
+[A more informative plot would show the location of stations alongside the hourly curves, as demonstrated in this PDF](https://github.com/richpauloo/mta/blob/main/out/station_hourly_avg_per_rider.pdf) and below.  
+
+```{r}
+bnyc <- st_read("data/Borough Boundaries.geojson") %>% 
+  st_transform(crs = 4269) %>% 
+  rmapshaper::ms_simplify(keep_shapes = TRUE)
+
+crs <- "+proj=omerc +lonc=90 +lat_0=40 +gamma=143 +alpha=57"
+
+plots <- vector("list", nrow(sta_mapgl))
+for(i in seq_along(sta_mapgl$station_complex)){
+  station = sta_mapgl$station_complex[i]
+  p1 = hrs %>% 
+    filter(station_complex == station) %>%
+    mutate(dow_upscale = ifelse(dow %in% c("Sat","Sun"),"weekend","weekday")) %>% 
+    ggplot(aes(hour, ridership, group = dow, color = dow_upscale)) +
+    geom_line(alpha = 0.7, key_glyph = "timeseries") +
+    scale_color_manual(values = c("#984ea3", "#377eb8")) +
+    scale_x_continuous(
+      limits = c(0, 25),
+      breaks = seq(0, 24, by = 6),  # Breaks every 6 hours
+      labels = sprintf("%02d:00", seq(0, 24, by = 6))  # Format labels as "HH:00"
+    ) +
+    facet_wrap(~fare_group, ncol = 1, scales = "free") +
+    labs(
+      title = " ",
+      subtitle = " ",
+      y = NULL,
+      x = NULL,
+      color = ""
+    ) +
+    theme_minimal() +
+    theme(
+      panel.grid.minor = element_blank(), 
+      legend.position = "bottom"
+    )
+  
+  p2 = ggplot() + 
+    geom_sf(data = bnyc, fill = "grey90") + 
+    geom_sf(data = sta_mapgl, color = "#4daf4a", cex = 0.8, alpha = 0.5, pch =20) +
+    geom_sf(data = filter(sta_mapgl, station_complex == station), 
+            color = "#e41a1c", cex = 2, alpha = 0.8) +
+    coord_sf(crs = crs) +
+    labs(
+      title = glue("{station} Average hourly ridership"),
+      subtitle = "Data from 2023-01-01 to 2023-12-31"
+    ) +
+    theme_void()
+  
+  plots[[i]] = p2 + p1 + plot_layout(widths = c(1, 2))
+  
+}
+```
+
+
+::: {.panel-tabset}
+
+## Morning Peak
+
+```{r}
+sta_newkirk <- "Newkirk Av-Little Haiti (2,5)"
+plots[[which(sta_mapgl$station_complex == sta_newkirk)]]
+```
+
+## Dual Peak
+
+```{r}
+sta_westchester <- "Westchester Sq-E Tremont Av (6)"
+plots[[which(sta_mapgl$station_complex == sta_westchester)]]
+```
+
+## Evening Peak
+
+```{r}
+sta_47 <- "47-50 Sts-Rockefeller Ctr (B,D,F,M)"
+plots[[which(sta_mapgl$station_complex == sta_47)]]
+```
+
+:::
+
+
+Finally, we calculate a third grouped summary from our hourly data (the annual ridership count per station complex), which we will compare against Census tract level data. From this summary level, we can visualize the total ridership count per station. Let's look at the top 25 stations. Just over 40 million riders entered Times Square in 2023.
 
 ```{r}
 #| out-width: 100%
@@ -291,12 +400,18 @@ hrs_annual <- hrs_annual %>%
 
 # And visualize the top 25 stations in YC by total annual ridership
 hrs_annual %>% 
+  mutate(fare_group = factor(
+    fare_group, levels = c("Fair Fare", "Seniors & Disability", "Students", "Full Fare"))
+  ) %>% 
   arrange(desc(total_ridership)) %>%
   slice(1:100) %>% # 4 fare groups, so this takes the top 25 stations
   # filter(station_complex %in% unique(hr$station_complex)[1:30]) %>%
   ggplot(aes(ridership, fct_reorder(station_complex, total_ridership), fill = fare_group)) +
   geom_col() +
-  rcartocolor::scale_fill_carto_d(palette = "Bold") +
+  rcartocolor::scale_fill_carto_d(
+    palette = "Bold", 
+    guide = guide_legend(reverse = TRUE)
+  ) +
   scale_x_continuous(labels = scales::label_comma()) +
   labs(
     title = "Total annual ridership (2023) for the top 25 stations in NYC",
@@ -313,7 +428,7 @@ hrs_annual %>%
 ```
 
 
-Now we need to join ridership data to the station spatial data. 
+Now we join ridership data to the station spatial data.
 
 ```{r}
 sta_complex_sf <- hr %>% 
@@ -373,12 +488,12 @@ sta_seniors %>%
 :::
 
 
-## EDA: Census Tract Variables
+## Census Tract Variables
 
-Now it's time to pull Census Tract data[^4]. Critically, we are interested in total population, senior population, and the below the poverty line, which we will assume is a proxy for the [Fair Fare riders](https://www.nyc.gov/site/fairfares/index.page)[^5]. From these variables we can calculate the proportion of potential senior and fair fare riders. From the Census tract spatial boundaries, we can find the nearest MTA Station.  
+Now it's time to pull Census Tract data[^4]. Critically, we are interested in total population, senior population, and population below the below the poverty line, which we will assume is a proxy for the [Fair Fare riders](https://www.nyc.gov/site/fairfares/index.page)[^5]. From these variables we can calculate the proportion of potential senior and fair fare riders. From the Census tract spatial boundaries, we can find the nearest MTA Station.  
 
 [^4]: A subsequent analysis might refine the spatial unit of consideration to the Census block group level, of which there are ~13, 000 blocks in NYC.  
-[^5]: We find this assumption reasonable for the limited scope of this analysis because the 2024 Fair Fare program income qualification ceilings are slightly above the poverty threshold (on the order of ~20%).  
+[^5]: We find this assumption reasonable for the limited scope of this analysis because the 2024 Fair Fare program income qualification ceilings are slightly above the poverty threshold (on the order of ~20%).   
 
 ```{r, message = FALSE, warning = FALSE, results='hide'}
 variables <- c(
@@ -446,17 +561,17 @@ Now we calculate the population and proportion of seniors (65 years of age or gr
 
 # Variables for men and women 65+
 variables <- c(
-  males_65_to_66 = "B01001_020",
-  males_67_to_69 = "B01001_021",
-  males_70_to_74 = "B01001_022",
-  males_75_to_79 = "B01001_023",
-  males_80_to_84 = "B01001_024",
-  males_85_and_over = "B01001_025",
-  females_65_to_66 = "B01001_044",
-  females_67_to_69 = "B01001_045",
-  females_70_to_74 = "B01001_046",
-  females_75_to_79 = "B01001_047",
-  females_80_to_84 = "B01001_048",
+  males_65_to_66      = "B01001_020",
+  males_67_to_69      = "B01001_021",
+  males_70_to_74      = "B01001_022",
+  males_75_to_79      = "B01001_023",
+  males_80_to_84      = "B01001_024",
+  males_85_and_over   = "B01001_025",
+  females_65_to_66    = "B01001_044",
+  females_67_to_69    = "B01001_045",
+  females_70_to_74    = "B01001_046",
+  females_75_to_79    = "B01001_047",
+  females_80_to_84    = "B01001_048",
   females_85_and_over = "B01001_049"
 )
 
@@ -510,9 +625,11 @@ nyc <- nyc %>%
 ```
 
 
-# Modeling
+## Senior and Fair Fare Ridership
 
-We assume there is a roughly linear relationship between the proportion of Seniors in a Census Tract and the proportion of Senior ridership at that tract's closest MTA Station[^6]. We make the same assumption for Fair Fare riders.  
+Next, we rank every Census Tract in terms of its actual Senior and Fair Fare ridership proportion relative to what would theoretically be expected based on the population of these individuals in the Census Tract. We can think of this as a "station utilization" metric for these populations and use the results as a springboard for hypothesis generation and interventions. 
+
+To proceed, we assume a roughly linear relationship between the proportion of Seniors in a Census Tract and the proportion of Senior ridership at that tract's closest MTA Station[^6]. We make the same assumption for Fair Fare riders.  
 
 [^6]: As stated before in the Assumptions, because there is not a clear and simple way to disaggregate the senior population from the disabled population in the Census, and because Seniors likely make up the majority of Senior/Disability riders in this fare category, for the purposes of this broad analysis, we assume that Senior/Disability riders are Seniors and henceforth, refer to this category only as "Seniors."
 
@@ -526,7 +643,7 @@ It follows then, that outliers from this linear trend--which we can quantify wit
 \end{align*}
 
 
-Next, we fit the models and show the graphical interpretation of the approach.  
+Next, we fit the models and show the graphical interpretation of the approach.   
 
 ```{r}
 # cleaning for linear model
@@ -549,15 +666,15 @@ nyc <- nyc %>%
     seniors_category = case_when(
       # residual_senior > 2 * se_senior ~ "Highly Overutilized",
       residual_senior > se_senior ~ "Above Average",
-      residual_senior >= -se_senior & residual_senior <= se_senior ~ "Average",  # Utilized condition fixed
-      # residual_senior < -2 * se_senior ~ "Highly Underutilized",  # Check for highly underutilized first
+      residual_senior >= -se_senior & residual_senior <= se_senior ~ "Average",  
+      # residual_senior < -2 * se_senior ~ "Highly Underutilized",  
       residual_senior < -se_senior ~ "Below Average"
     ),
     low_income_category = case_when(
       # residual_low_income > 2 * se_low_income ~ "Highly Overutilized",
       residual_low_income > se_low_income ~ "Above Average",
-      residual_low_income >= -se_low_income & residual_low_income <= se_low_income ~ "Average",  # Utilized condition fixed
-      # residual_low_income < -2 * se_low_income ~ "Highly Underutilized",  # Check for highly underutilized first
+      residual_low_income >= -se_low_income & residual_low_income <= se_low_income ~ "Average",
+      # residual_low_income < -2 * se_low_income ~ "Highly Underutilized",
       residual_low_income < -se_low_income ~ "Below Average"
     )
   )
@@ -660,9 +777,7 @@ p3 + p4
 
 :::
 
-# Results 
-
-Finally, we can bring this all together in two maps. The code is below, but I won't render the maps so this file doesn't get too large. For the maps, refer back to the [project webpage](https://richpauloo.com/mta#about).  
+Finally, we can bring this all together in three maps, one for Seniors, one for Fair Fare riders, and one that shows the intersection of the two. The code is below, but I won't render the maps so this file doesn't get too large. To view the maps, please refer back to the [project webpage](https://richpauloo.com/mta).  
 
 ```{r}
 cat_key <- c("Above Average" = "🔵", "Average" = "⚪", "Below Average" = "🔴")
@@ -766,4 +881,40 @@ maplibre(style = carto_style("dark-matter-no-labels"),
   add_fullscreen_control(position = "top-right") %>%
   add_navigation_control() 
 ```
+
+
+# Results
+
+In this section, we focus only on the results from the [Senior and Fair Fare Ridership](#senior-and-fair-fare-ridership) section of the Exploratory Data Analysis. This analysis revealed interesting patterns in ridership across different census tracts:  
+
+- **Above average senior ridership** was concentrated in areas where seniors may need to travel farther for work or essential services. These areas appear to be correlated with **low-income tracts**, suggesting that seniors in these neighborhoods face greater travel burdens and rely more heavily on public transit.  
+
+- **Above average Fair Fare ridership** also indicated areas with high levels of economic hardship, where residents have few alternatives to public transportation and may travel longer distances for work.  
+
+- **Below average ridership** seems to be correlated with relatively more affluent or well-connected areas where residents might have other transportation options, such as walking or private vehicles. These tracts may have more localized services, reducing the need for frequent subway use.  
+
+- **Zones of above average ridership for seniors and Fair Fare riders**, such as south Brooklyn, might represent areas with the greatest need for interventions and transportation assistance services to meet an increased reliance on transit.  
+
+
+## Implications for MTA
+
+1. **Resource Allocation**: The MTA can use these findings to target accessibility improvements in stations serving areas with high proportions of seniors and low-income residents. Stations with above-average ridership but inadequate accessibility (e.g., lack of elevators or escalators) might be prioritized for upgrades.  
+
+2. **Service Adjustments**: In areas with below-average ridership, the MTA might explore enhancing bus routes or other services that better meet the local population's needs, especially for residents who might prefer surface transportation over the subway. We might also seek to understand _why_ low ridership is observed in these populations.  
+
+3. **Policy Applications**: The study highlights the need for continued investment in programs like **Fair Fares**, which enable low-income riders to access affordable transit. Expanding this program to more residents could help reduce travel-based inequality, especially in areas with high populations of qualifying individuals but below average ridership.  
+
+## Future Studies
+
+1. **Spatial autocorrelation**: A future study could apply techniques like Moran's I to assess the spatial correlation of above-average senior ridership and low-income tracts, quantifying the degree of overlap between these two groups, to test the hypothesis that low-income seniors are more likely to travel than high-income seniors.  
+
+2. **Impact of accessibility upgrades**: After implementing targeted accessibility improvements, future analyses could use changes in ridership patterns to evaluate the effectiveness of those interventions.  
+
+3. **Multi-modal transit**: Expanding the model to include other forms of transit (e.g., buses, paratransit) could provide a more comprehensive view of how seniors and low-income riders navigate the city.  
+
+4. **Elevator access**: This study neglected elevator access, but a future study might prioritize stations for elevator upgrades.  
+
+5. **Aggregating by different spatial units**: For the purposes of this study, and because transit occurs between boroughs, all five boroughs are grouped into the regression. However, there may be merit in a future study that groups each borough independently to examine trends that might emerge at that spatial scale. In the same sense, for future analysis, data could be grouped at different spatial scales, including by neighborhood or community district, subway line corridors, fare zones, accessibility zones (e.g., stations with elevators or ADA compliance), transit-oriented development areas, economic development zones, land use zones (commercial, industrial, or residential), and proximity to major transit hubs like Penn Station or Grand Central, or by distance from key downtown metro areas. Analyses at these scales might help identify underserved areas with unique transit needs.  
+
+This analysis lays very preliminary groundwork for a more nuanced understanding of transit accessibility in New York City. With these insights, the MTA can make informed decisions to better serve its most vulnerable populations, ultimately enhancing the quality of life for seniors, low-income residents, and the broader community.  
 
